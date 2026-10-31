@@ -1,0 +1,69 @@
+[project]
+name = "linkedin-marketing"
+version = "0.1.0"
+description = "Unofficial Python client for the official LinkedIn Marketing API, with a dry-run-by-default safety layer and an optional MCP server."
+readme = "README.md"
+license = "MIT"
+license-files = ["LICENSE"]
+authors = [{ name = "Ben Atkinson" }]
+requires-python = ">=3.12"
+keywords = ["linkedin", "marketing-api", "linkedin-ads", "mcp", "model-context-protocol", "ads"]
+classifiers = [
+    "Development Status :: 3 - Alpha",
+    "Intended Audience :: Developers",
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3.12",
+    "Programming Language :: Python :: 3.13",
+    "Topic :: Internet :: WWW/HTTP",
+    "Typing :: Typed",
+]
+dependencies = [
+    "httpx>=0.28,<1",
+]
+
+[project.optional-dependencies]
+mcp = ["mcp>=1.20,<3"]
+
+[project.urls]
+Homepage = "https://github.com/BenA-SA/linkedin-marketing"
+Issues = "https://github.com/BenA-SA/linkedin-marketing/issues"
+Changelog = "https://github.com/BenA-SA/linkedin-marketing/blob/main/CHANGELOG.md"
+
+[project.scripts]
+linkedin-marketing-mcp = "linkedin_marketing.mcp.server:main"
+linkedin-marketing-token = "linkedin_marketing.mint_token:main"
+
+[dependency-groups]
+dev = [
+    "mcp>=1.20,<3",
+    "pytest>=8",
+    "respx>=0.22",
+    "ruff>=0.15",
+]
+
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/linkedin_marketing"]
+
+[tool.uv]
+exclude-newer = "1 week"
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+addopts = "-p no:cacheprovider"
+
+[tool.ruff]
+line-length = 100
+target-version = "py312"
+
+[tool.ruff.lint]
+select = ["E", "F", "W", "I", "B", "UP", "N", "C90", "PLR0912", "PLR0915", "SIM", "RUF"]
+
+[tool.ruff.lint.mccabe]
+max-complexity = 10
+
+[tool.ruff.lint.isort]
+known-first-party = ["linkedin_marketing"]
