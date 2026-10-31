@@ -59,6 +59,9 @@ addopts = "-p no:cacheprovider"
 line-length = 100
 target-version = "py312"
 
+[tool.ruff.format]
+exclude = ["*.md"]
+
 [tool.ruff.lint]
 select = ["E", "F", "W", "I", "B", "UP", "N", "C90", "PLR0912", "PLR0915", "SIM", "RUF"]
 
