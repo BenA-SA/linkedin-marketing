@@ -190,12 +190,23 @@ class TestAuthAndTransport:
         assert "Limit period: ONE_MINUTE" in str(error)
         assert "Daily quotas reset" not in str(error)
 
+    @pytest.mark.parametrize(
+        ("message", "period"),
+        [("Quota exceeded for period DAY", "DAY"), ("Too many requests per minute", "per minute")],
+    )
+    def test_429_bare_period_words_are_recognised(self, client, api, message, period):
+        route(api, "GET", f"/adAccounts/{ACCOUNT_ID}", status=429, json={"message": message})
+        with pytest.raises(RateLimitError) as caught:
+            client.ads.accounts.get(ACCOUNT_ID)
+        assert caught.value.period == period
+        assert "No limit period was recognised" not in str(caught.value)
+
     def test_429_without_details_does_not_assume_daily(self, client, api):
         route(api, "GET", f"/adAccounts/{ACCOUNT_ID}", status=429, json={"status": 429})
         with pytest.raises(RateLimitError) as caught:
             client.ads.accounts.get(ACCOUNT_ID)
         assert caught.value.period == ""
-        assert "did not say which limit fired" in str(caught.value)
+        assert "No limit period was recognised" in str(caught.value)
         assert 'Body: {"status":429}' in str(caught.value)
 
     def test_429_short_retry_after_waits_and_retries(self, tmp_path, api):

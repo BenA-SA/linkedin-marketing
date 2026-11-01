@@ -17,7 +17,8 @@ _PERIOD_FIELD = re.compile(
     r'"?(?:period|quotaPeriod|timeWindow|window)"?\s*[:=]\s*"?([A-Za-z0-9_]+)'
 )
 _PERIOD_TOKEN = re.compile(
-    r"\b(?:ONE|FIVE|TEN|FIFTEEN|THIRTY|SIXTY)_(?:SECOND|MINUTE|HOUR|DAY)S?\b|\bDAILY\b"
+    r"\b(?:(?:ONE|FIVE|TEN|FIFTEEN|THIRTY|SIXTY)_)?(?:SECOND|MINUTE|HOUR|DAY)S?\b"
+    r"|\bDAILY\b|\bper (?:second|minute|hour|day)\b|\bdaily\b"
 )
 _LIMIT_HEADER_HINTS = ("rate", "retry", "quota", "limit", "throttl")
 _REQUEST_ID_HEADER = "x-li-uuid"
@@ -168,8 +169,9 @@ def _rate_limit_message(endpoint: str, details: dict) -> str:
         parts.append(f"Retry-After: {details['retry_after']}s.")
     if not (details["period"] or details["retry_after"]):
         parts.append(
-            "LinkedIn did not say which limit fired: a per-minute throttle clears "
-            "within a minute, a daily quota resets at 00:00 UTC."
+            "No limit period was recognised in the response (check the body below): "
+            "a per-minute throttle clears within a minute, a daily quota resets at "
+            "00:00 UTC."
         )
     parts.append("Exact quotas: the app's Analytics tab in the Developer Portal.")
     if details["headers"]:
