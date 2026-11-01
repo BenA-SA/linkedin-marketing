@@ -302,7 +302,10 @@ def register_ad_library(server, get_client: ClientFactory) -> None:
     ) -> dict:
         """Search LinkedIn's public Ad Library (any advertiser). Needs keyword, advertiser
         or payer. countries are ISO-2 codes (e.g. GB). Returns ad URL, advertiser, payer,
-        format and targeting; resume with start=next_start. The daily quota is small."""
+        format and targeting; resume with start=next_start. LinkedIn's quota is small and
+        unpublished: if it is hit mid-search the ads read so far come back with
+        stopped="rate_limited" and rate_limit (period, message, headers, body as LinkedIn
+        sent them); a 429 on the first page is an error carrying the same details."""
         page = get_client().ad_library.search(
             keyword,
             advertiser,

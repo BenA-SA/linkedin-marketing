@@ -170,6 +170,45 @@ class TestAuthAndTransport:
             client.ads.accounts.get(ACCOUNT_ID)
         assert caught.value.retry_after == "3600"
 
+    def test_429_keeps_what_linkedin_said_about_the_limit(self, client, api):
+        route(
+            api,
+            "GET",
+            f"/adAccounts/{ACCOUNT_ID}",
+            status=429,
+            json={"serviceErrorCode": 101, "message": "Throttled", "period": "ONE_MINUTE"},
+            headers={"X-RateLimit-Remaining": "0", "x-li-uuid": "abc==", "Set-Cookie": "x=y"},
+        )
+        with pytest.raises(RateLimitError) as caught:
+            client.ads.accounts.get(ACCOUNT_ID)
+        error = caught.value
+        assert error.period == "ONE_MINUTE"
+        assert error.api_message == "Throttled"
+        assert error.service_error_code == 101
+        assert error.headers == {"x-ratelimit-remaining": "0", "x-li-uuid": "abc=="}
+        assert error.context["period"] == "ONE_MINUTE"
+        assert "Limit period: ONE_MINUTE" in str(error)
+        assert "Daily quotas reset" not in str(error)
+
+    @pytest.mark.parametrize(
+        ("message", "period"),
+        [("Quota exceeded for period DAY", "DAY"), ("Too many requests per minute", "per minute")],
+    )
+    def test_429_bare_period_words_are_recognised(self, client, api, message, period):
+        route(api, "GET", f"/adAccounts/{ACCOUNT_ID}", status=429, json={"message": message})
+        with pytest.raises(RateLimitError) as caught:
+            client.ads.accounts.get(ACCOUNT_ID)
+        assert caught.value.period == period
+        assert "No limit period was recognised" not in str(caught.value)
+
+    def test_429_without_details_does_not_assume_daily(self, client, api):
+        route(api, "GET", f"/adAccounts/{ACCOUNT_ID}", status=429, json={"status": 429})
+        with pytest.raises(RateLimitError) as caught:
+            client.ads.accounts.get(ACCOUNT_ID)
+        assert caught.value.period == ""
+        assert "No limit period was recognised" in str(caught.value)
+        assert 'Body: {"status":429}' in str(caught.value)
+
     def test_429_short_retry_after_waits_and_retries(self, tmp_path, api):
         settings = make_settings(tmp_path, retry_after_max_seconds=5)
         call = api.get(url__startswith="https://api.linkedin.com/rest/adAccounts/").mock(

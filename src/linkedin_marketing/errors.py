@@ -8,7 +8,20 @@ secret: response bodies are truncated and LinkedIn does not echo credentials.
 
 from __future__ import annotations
 
+import json
+import re
+from collections.abc import Mapping
+
 _BODY_MAX_CHARS = 500
+_PERIOD_FIELD = re.compile(
+    r'"?(?:period|quotaPeriod|timeWindow|window)"?\s*[:=]\s*"?([A-Za-z0-9_]+)'
+)
+_PERIOD_TOKEN = re.compile(
+    r"\b(?:(?:ONE|FIVE|TEN|FIFTEEN|THIRTY|SIXTY)_)?(?:SECOND|MINUTE|HOUR|DAY)S?\b"
+    r"|\bDAILY\b|\bper (?:second|minute|hour|day)\b|\bdaily\b"
+)
+_LIMIT_HEADER_HINTS = ("rate", "retry", "quota", "limit", "throttl")
+_REQUEST_ID_HEADER = "x-li-uuid"
 
 
 def _truncate(body: str) -> str:
@@ -64,20 +77,108 @@ class AuthError(LinkedInError):
 
 
 class RateLimitError(LinkedInError):
-    """LinkedIn answered 429: an application or member quota is used up."""
+    """LinkedIn answered 429: a per-minute throttle or a daily quota was hit.
 
-    def __init__(self, endpoint: str, body: str = "", retry_after: str = ""):
-        super().__init__(
-            f"LinkedIn rate limit hit on {endpoint} (HTTP 429). Daily quotas reset "
-            "at midnight UTC; see the app's Analytics tab in the Developer Portal.",
-            status_code=429,
-            body=_truncate(body),
-            endpoint=endpoint,
-            retry_after=retry_after,
-        )
+    LinkedIn does not publish its limits and a 200 response carries no quota
+    headers, so the 429 itself is the only place it says *which* limit fired.
+    Everything it sent is kept: ``period`` (parsed from the body or headers
+    when present, else ``""``), ``api_message``, ``service_error_code``, the
+    limit-related ``headers`` plus the ``x-li-uuid`` request id, and the
+    truncated ``body``. The message is built from those values and never
+    assumes the limit was daily.
+    """
+
+    def __init__(
+        self,
+        endpoint: str,
+        body: str = "",
+        retry_after: str = "",
+        headers: Mapping[str, str] | None = None,
+    ):
+        limit_headers = _limit_headers(headers or {})
+        api_message, service_error_code = _parse_error_body(body)
+        period = _find_period(body, limit_headers)
         self.status_code = 429
         self.endpoint = endpoint
         self.retry_after = retry_after
+        self.period = period
+        self.api_message = api_message
+        self.service_error_code = service_error_code
+        self.headers = limit_headers
+        self.body = _truncate(body)
+        super().__init__(
+            _rate_limit_message(endpoint, self.details()),
+            status_code=429,
+            endpoint=endpoint,
+            **self.details(),
+        )
+
+    def details(self) -> dict:
+        """What LinkedIn said about the limit, as plain JSON-ready values."""
+        return {
+            "period": self.period,
+            "retry_after": self.retry_after,
+            "api_message": self.api_message,
+            "service_error_code": self.service_error_code,
+            "headers": self.headers,
+            "body": self.body,
+        }
+
+
+def _limit_headers(headers: Mapping[str, str]) -> dict[str, str]:
+    """Headers that describe a rate limit, plus LinkedIn's request id for support."""
+    kept = {}
+    for name, value in headers.items():
+        lowered = name.lower()
+        if lowered == _REQUEST_ID_HEADER or any(hint in lowered for hint in _LIMIT_HEADER_HINTS):
+            kept[lowered] = value
+    return kept
+
+
+def _parse_error_body(body: str) -> tuple[str, int | None]:
+    """LinkedIn's ``message`` and ``serviceErrorCode`` from a JSON error body."""
+    try:
+        parsed = json.loads(body)
+    except ValueError:
+        return "", None
+    if not isinstance(parsed, dict):
+        return "", None
+    code = parsed.get("serviceErrorCode")
+    return str(parsed.get("message") or ""), code if isinstance(code, int) else None
+
+
+def _find_period(body: str, headers: Mapping[str, str]) -> str:
+    """The limit's period (e.g. ``ONE_MINUTE``) if LinkedIn named one anywhere."""
+    for text in (body, *headers.values()):
+        field = _PERIOD_FIELD.search(text)
+        if field:
+            return field.group(1)
+        token = _PERIOD_TOKEN.search(text)
+        if token:
+            return token.group(0)
+    return ""
+
+
+def _rate_limit_message(endpoint: str, details: dict) -> str:
+    parts = [f"LinkedIn rate limit hit on {endpoint} (HTTP 429)."]
+    if details["api_message"]:
+        parts.append(f"LinkedIn said: {details['api_message']!r}.")
+    if details["period"]:
+        parts.append(f"Limit period: {details['period']}.")
+    if details["retry_after"]:
+        parts.append(f"Retry-After: {details['retry_after']}s.")
+    if not (details["period"] or details["retry_after"]):
+        parts.append(
+            "No limit period was recognised in the response (check the body below): "
+            "a per-minute throttle clears within a minute, a daily quota resets at "
+            "00:00 UTC."
+        )
+    parts.append("Exact quotas: the app's Analytics tab in the Developer Portal.")
+    if details["headers"]:
+        parts.append(f"Headers: {json.dumps(details['headers'], sort_keys=True)}.")
+    if details["body"]:
+        parts.append(f"Body: {details['body']}")
+    return " ".join(parts)
 
 
 class ApiError(LinkedInError):
