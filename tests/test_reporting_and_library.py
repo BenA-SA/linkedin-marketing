@@ -234,7 +234,29 @@ class TestAdLibrary:
         with pytest.raises(ValueError):
             client.ad_library.search(keyword="x", countries=["GBR"])
 
+    def test_429_after_first_page_returns_ads_already_read(self, tmp_path, api):
+        first_page = {
+            "elements": [
+                {"adUrl": f"https://www.linkedin.com/ad-library/detail/{n}"} for n in range(25)
+            ],
+            "paging": {"start": 0, "count": 25, "total": 100},
+        }
+        api.get(url__startswith=f"{API_ROOT}/adLibrary").mock(
+            side_effect=[
+                httpx.Response(200, json=first_page),
+                httpx.Response(429, json={"message": "Too many", "period": "ONE_MINUTE"}),
+            ]
+        )
+        with LinkedInClient(make_settings(tmp_path), httpx.Client()) as client:
+            page = client.ad_library.search(keyword="x", limit=75)
+        assert len(page.ads) == 25
+        assert page.next_start == 25
+        result = page.to_dict()
+        assert result["stopped"] == "rate_limited"
+        assert result["rate_limit"]["period"] == "ONE_MINUTE"
+
     def test_quota_exhausted_is_typed(self, client, api):
         route(api, "GET", "/adLibrary", status=429, json={"serviceErrorCode": 101})
-        with pytest.raises(RateLimitError):
+        with pytest.raises(RateLimitError) as caught:
             client.ad_library.search(keyword="x")
+        assert caught.value.service_error_code == 101

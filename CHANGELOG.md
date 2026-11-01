@@ -4,6 +4,18 @@ All notable changes to this project are documented here. The format follows
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and this project uses
 [Semantic Versioning](https://semver.org/).
 
+## [Unreleased]
+
+### Fixed
+- `RateLimitError` no longer claims every 429 is a daily quota. It keeps what
+  LinkedIn sent about the limit: `period` (parsed from the body or headers when
+  present), `api_message`, `service_error_code`, the limit-related headers plus
+  the `x-li-uuid` request id, and the body. The message, which is what an MCP
+  client sees, is built from those values.
+- The Ad Library search returns the ads already read when a 429 lands after the
+  first page, with `stopped: "rate_limited"` and the limit details, instead of
+  discarding them.
+
 ## [0.1.0] - 2026-10-31
 
 ### Added

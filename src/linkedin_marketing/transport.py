@@ -199,5 +199,7 @@ def raise_for_status(endpoint: str, response: httpx.Response) -> None:
     if status == 403:
         raise AuthError(_FORBIDDEN_HINT, 403, body, endpoint)
     if status == 429:
-        raise RateLimitError(endpoint, body, response.headers.get("Retry-After", ""))
+        raise RateLimitError(
+            endpoint, body, response.headers.get("Retry-After", ""), response.headers
+        )
     raise ApiError(endpoint, status, body)

@@ -11,9 +11,13 @@ LinkedIn-Version 202610 (Oct 2026):
 - records carry only ``isRestricted``, ``adUrl``, ``details.type``,
   ``details.advertiser{advertiserName, adPayer, advertiserUrl}`` and
   ``details.adTargeting`` by default;
-- the quota is small (roughly a dozen calls a day on a new app before a 429
-  ``TOO_MANY_REQUESTS``); check the app's Analytics tab in the Developer
-  Portal. Every search is therefore capped by ``max_pages``.
+- the quota is small and unpublished (on 31 Oct 2026 a burst of about a
+  dozen calls drew 429s; whether that was a per-minute throttle or the daily
+  quota was not recorded). A 200 carries no quota headers, so only the 429
+  says which limit fired: ``RateLimitError`` keeps its period, message,
+  headers and body. A 429 after the first page returns the ads already read
+  with ``stopped="rate_limited"`` and those details; one on the first page
+  raises. Every search is also capped by ``max_pages``.
 
 The ``dateRange`` (end exclusive) parameter follows the same Rest.li date
 shape as reporting; it is not in Microsoft Learn's Marketing docs, so treat
@@ -32,6 +36,7 @@ from dataclasses import dataclass
 from datetime import date
 
 from linkedin_marketing import restli
+from linkedin_marketing.errors import RateLimitError
 from linkedin_marketing.models import AdLibraryAd
 from linkedin_marketing.resources.base import Resource
 from linkedin_marketing.transport import Request
@@ -61,13 +66,19 @@ class AdLibraryPage:
     ads: list[AdLibraryAd]
     next_start: int | None
     total: int | None
+    stopped: str | None = None
+    rate_limit: dict | None = None
 
     def to_dict(self) -> dict:
-        return {
+        page = {
             "ads": [ad.to_dict() for ad in self.ads],
             "next_start": self.next_start,
             "total": self.total,
         }
+        if self.stopped:
+            page["stopped"] = self.stopped
+            page["rate_limit"] = self.rate_limit
+        return page
 
 
 class AdLibrary(Resource):
@@ -87,7 +98,10 @@ class AdLibrary(Resource):
         """Search the Ad Library; at least one of keyword/advertiser/payer.
 
         Fetches pages of up to 25 until ``limit`` ads, the last page, or
-        ``LINKEDIN_MAX_PAGES``. Resume with ``start=page.next_start``.
+        ``LINKEDIN_MAX_PAGES``. Resume with ``start=page.next_start``. A 429
+        after the first page stops early and keeps the ads already read
+        (``stopped="rate_limited"``, ``rate_limit`` = what LinkedIn said);
+        a 429 on the first page raises ``RateLimitError``.
         """
         query = self._query(keyword, advertiser, payer, countries, start_date, end_date)
         ads: list[AdLibraryAd] = []
@@ -97,7 +111,12 @@ class AdLibrary(Resource):
         for _ in range(self._settings.max_pages):
             count = min(MAX_PAGE_SIZE, limit - len(ads))
             page = (*query, ("start", str(offset)), ("count", str(count)))
-            body = self._transport.send(Request("GET", "/adLibrary", page)).body
+            try:
+                body = self._transport.send(Request("GET", "/adLibrary", page)).body
+            except RateLimitError as exc:
+                if offset == start:
+                    raise
+                return AdLibraryPage(ads[:limit], offset, total, "rate_limited", exc.details())
             elements = body.get("elements", [])
             ads.extend(AdLibraryAd.from_api(raw) for raw in elements)
             offset += len(elements)
