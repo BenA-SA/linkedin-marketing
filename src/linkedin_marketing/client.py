@@ -54,7 +54,7 @@ class LinkedInClient:
         )
         self._ad_library = AdLibrary(self.transport, self.guard)
         self._leads = Leads(self.transport, self.guard)
-        self._conversions = Conversions(self.transport, self.guard)
+        self._conversions = Conversions(self.transport, self.guard, self._ads.campaigns)
         self._audiences = Audiences(self.transport, self.guard)
         self._organizations = Organizations(self.transport, self.guard)
         self._events = Events(self.transport, self.guard)

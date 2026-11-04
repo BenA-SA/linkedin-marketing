@@ -8,6 +8,7 @@ from linkedin_marketing.config import Settings
 from linkedin_marketing.errors import (
     ApiError,
     AuthError,
+    CampaignNotInAccountError,
     ConfigError,
     LinkedInError,
     ModuleDisabledError,
@@ -15,10 +16,10 @@ from linkedin_marketing.errors import (
     RateLimitError,
     WriteRefusedError,
 )
-from linkedin_marketing.hashing import hash_email
+from linkedin_marketing.hashing import hash_email, hash_name
 from linkedin_marketing.modules import MODULES
 from linkedin_marketing.resources.audiences import AudienceCompany, AudienceUser
-from linkedin_marketing.resources.conversions import ConversionEvent
+from linkedin_marketing.resources.conversions import ConversionEvent, ConversionRuleSpec
 from linkedin_marketing.safety import WriteResult
 
 __version__ = "0.1.0"
@@ -29,8 +30,10 @@ __all__ = [
     "AudienceCompany",
     "AudienceUser",
     "AuthError",
+    "CampaignNotInAccountError",
     "ConfigError",
     "ConversionEvent",
+    "ConversionRuleSpec",
     "LinkedInClient",
     "LinkedInError",
     "ModuleDisabledError",
@@ -40,4 +43,5 @@ __all__ = [
     "WriteRefusedError",
     "WriteResult",
     "hash_email",
+    "hash_name",
 ]

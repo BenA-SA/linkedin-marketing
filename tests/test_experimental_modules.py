@@ -206,6 +206,7 @@ class TestConversions:
             "type": "QUALIFIED_LEAD",
             "postClickAttributionWindowSize": 30,
             "viewThroughAttributionWindowSize": 7,
+            "attributionType": "LAST_TOUCH_BY_CAMPAIGN",
         }
 
 

@@ -15,7 +15,7 @@ from typing import Literal
 from linkedin_marketing.client import LinkedInClient
 from linkedin_marketing.modules import MODULES
 from linkedin_marketing.resources.audiences import AudienceCompany, AudienceUser
-from linkedin_marketing.resources.conversions import ConversionEvent
+from linkedin_marketing.resources.conversions import ConversionEvent, ConversionRuleSpec
 
 ClientFactory = Callable[[], LinkedInClient]
 DEFAULT_LOOKBACK_DAYS = 30
@@ -363,20 +363,133 @@ def register_leads(server, get_client: ClientFactory) -> None:
 
 
 def register_conversions(server, get_client: ClientFactory) -> None:
+    """Rules, campaign associations and events: the Conversions API's three steps."""
+    _register_conversion_rules(server, get_client)
+    _register_campaign_conversions(server, get_client)
+    _register_conversion_events(server, get_client)
+
+
+AutoAssociation = Literal["ALL_CAMPAIGNS", "OBJECTIVE_BASED"] | None
+AttributionType = Literal["LAST_TOUCH_BY_CAMPAIGN", "LAST_TOUCH_BY_CONVERSION"]
+_RULE_FIELDS = (
+    "rule_type: e.g. LEAD, QUALIFIED_LEAD, PURCHASE, SIGN_UP. post_click_window_days: 1, 7, 28, "
+    "30 or 90; view_through_window_days: 1, 7, 30 or 90; 180 or 365 also for LEAD, "
+    "QUALIFIED_LEAD, MARKETING_QUALIFIED_LEAD, SALES_QUALIFIED_LEAD, PURCHASE, ADD_TO_CART, "
+    "SUBMIT_APPLICATION. auto_association: ALL_CAMPAIGNS (up to 200 campaigns), "
+    "OBJECTIVE_BASED (campaigns whose objective fits the type) or null (none: then call "
+    "li_associate_campaigns_to_conversion, or no conversions are attributed)."
+)
+
+
+def _register_conversion_rules(server, get_client: ClientFactory) -> None:
     note = _experimental("conversions")
 
-    def li_list_conversion_rules(account_id: int | None = None) -> list[dict]:
+    def li_list_conversion_rules(
+        account_id: int | None = None, include_shared: bool = False
+    ) -> list[dict]:
         client = get_client()
-        return _dicts(client.conversions.rules(_account(client, account_id)))
+        return _dicts(client.conversions.rules(_account(client, account_id), include_shared))
 
     def li_create_conversion_rule(
-        name: str, rule_type: str = "LEAD", confirm: bool = False, account_id: int | None = None
+        name: str,
+        rule_type: str = "LEAD",
+        post_click_window_days: int = 30,
+        view_through_window_days: int = 7,
+        attribution_type: AttributionType = "LAST_TOUCH_BY_CAMPAIGN",
+        auto_association: AutoAssociation = None,
+        confirm: bool = False,
+        account_id: int | None = None,
     ) -> dict:
         client = get_client()
         result = client.conversions.create_rule(
-            _account(client, account_id), name, rule_type, confirm=confirm
+            _account(client, account_id),
+            name,
+            rule_type,
+            post_click_window_days,
+            view_through_window_days,
+            confirm,
+            attribution_type=attribution_type,
+            auto_association=auto_association,
         )
         return result.to_dict()
+
+    def li_create_conversion_rules(
+        rules: list[dict],
+        auto_association: AutoAssociation = None,
+        confirm: bool = False,
+        account_id: int | None = None,
+    ) -> dict:
+        client = get_client()
+        specs = [ConversionRuleSpec(**rule) for rule in rules]
+        result = client.conversions.create_rules(
+            _account(client, account_id), specs, confirm, auto_association=auto_association
+        )
+        return result.to_dict()
+
+    _add(
+        server,
+        li_list_conversion_rules,
+        description=note + "List conversion rules on an ad account (include_shared adds rules "
+        "shared across the Business Manager).",
+    )
+    _add(
+        server,
+        li_create_conversion_rule,
+        write=True,
+        description=note + "Create a CONVERSIONS_API conversion rule. " + _RULE_FIELDS + WRITE_NOTE,
+    )
+    _add(
+        server,
+        li_create_conversion_rules,
+        write=True,
+        description=note
+        + "Create up to 100 CONVERSIONS_API rules in one batch. Each rule: name, rule_type, "
+        "post_click_window_days, view_through_window_days, attribution_type. "
+        + _RULE_FIELDS
+        + WRITE_NOTE,
+    )
+
+
+def _register_campaign_conversions(server, get_client: ClientFactory) -> None:
+    note = _experimental("conversions")
+
+    def li_list_campaign_conversions(
+        campaign_ids: list[int], rule_id: int | None = None, account_id: int | None = None
+    ) -> list[dict]:
+        client = get_client()
+        rows = client.conversions.campaign_conversions(
+            _account(client, account_id), campaign_ids, rule_id
+        )
+        return _dicts(rows)
+
+    def li_associate_campaigns_to_conversion(
+        rule_id: int, campaign_ids: list[int], confirm: bool = False, account_id: int | None = None
+    ) -> dict:
+        client = get_client()
+        result = client.conversions.associate_campaigns(
+            _account(client, account_id), rule_id, campaign_ids, confirm
+        )
+        return result.to_dict()
+
+    _add(
+        server,
+        li_list_campaign_conversions,
+        description=note + "Which conversion rules each campaign is associated with "
+        "(optionally only rule_id). Campaigns must be in the ad account.",
+    )
+    _add(
+        server,
+        li_associate_campaigns_to_conversion,
+        write=True,
+        description=note
+        + "Associate campaigns (up to 50, all in the ad account) with a conversion rule, so "
+        "conversions are attributed to them. Already-associated campaigns are skipped."
+        + WRITE_NOTE,
+    )
+
+
+def _register_conversion_events(server, get_client: ClientFactory) -> None:
+    note = _experimental("conversions")
 
     def li_send_conversion_events(
         rule_id: int, events: list[dict], confirm: bool = False, account_id: int | None = None
@@ -395,23 +508,14 @@ def register_conversions(server, get_client: ClientFactory) -> None:
 
     _add(
         server,
-        li_list_conversion_rules,
-        description=note + "List conversion rules on an ad account.",
-    )
-    _add(
-        server,
-        li_create_conversion_rule,
-        write=True,
-        description=note + "Create a CONVERSIONS_API conversion rule." + WRITE_NOTE,
-    )
-    _add(
-        server,
         li_send_conversion_events,
         write=True,
         description=note
         + "Send server-side conversion events to a rule. Each event: happened_at (ISO, past "
-        "90 days) plus email (hashed locally) or li_fat_id or first_name+last_name; optional "
-        "value, currency, event_id (dedup), company, title, country_code." + WRITE_NOTE,
+        "90 days) plus at least one of email (hashed locally), li_fat_id, ip_address (IPv4), "
+        "lead (urn:li:leadGenFormResponse:..., matches a Lead Gen Form submitter), external_id, "
+        "or first_name+last_name (hash_names=true sends them SHA-256 hashed); optional value, "
+        "currency, event_id (dedup), company, title, country_code." + WRITE_NOTE,
     )
 
 

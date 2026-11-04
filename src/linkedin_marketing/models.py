@@ -397,6 +397,8 @@ class ConversionRule(Model):
     attribution_type: str | None
     post_click_window_days: int | None
     view_through_window_days: int | None
+    ownership_type: str | None
+    account_id: str
     raw: dict = field(repr=False)
 
     @classmethod
@@ -410,6 +412,27 @@ class ConversionRule(Model):
             attribution_type=raw.get("attributionType"),
             post_click_window_days=raw.get("postClickAttributionWindowSize"),
             view_through_window_days=raw.get("viewThroughAttributionWindowSize"),
+            ownership_type=raw.get("ownershipType"),
+            account_id=urn_id(raw.get("account")),
+            raw=raw,
+        )
+
+
+@dataclass(frozen=True)
+class CampaignConversion(Model):
+    """One campaign-to-conversion-rule association (``/campaignConversions``)."""
+
+    campaign_id: int
+    rule_id: int
+    associated_at: int | None
+    raw: dict = field(repr=False)
+
+    @classmethod
+    def from_api(cls, raw: dict) -> CampaignConversion:
+        return cls(
+            campaign_id=int(urn_id(raw.get("campaign")) or 0),
+            rule_id=int(urn_id(raw.get("conversion")) or 0),
+            associated_at=raw.get("associatedAt"),
             raw=raw,
         )
 
