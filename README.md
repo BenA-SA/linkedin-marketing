@@ -119,6 +119,27 @@ client.organizations.posts(organization_id)
 client.events.by_organizer(organization_id)
 ```
 
+**Conversions API, end to end** (experimental). A rule only gets conversions
+attributed to the campaigns associated with it, so associate them when you
+create the rule or afterwards. Each call below is a dry run until you add
+`confirm=True`:
+
+```python
+from datetime import datetime, UTC
+from linkedin_marketing import ConversionEvent
+
+client.conversions.create_rule(account_id, "Qualified lead", "QUALIFIED_LEAD",
+                               post_click_window_days=90,
+                               auto_association="OBJECTIVE_BASED")
+client.conversions.associate_campaigns(account_id, rule_id, [222222222, 222222223])
+client.conversions.campaign_conversions(account_id, [222222222], rule_id=rule_id)
+
+# A Lead Gen Form lead is matched by its response URN alone.
+event = ConversionEvent(datetime.now(UTC), lead="urn:li:leadGenFormResponse:<id>",
+                        event_id="crm-0001")
+client.conversions.send_events(account_id, rule_id, [event])
+```
+
 Every error is a subclass of `linkedin_marketing.LinkedInError`. Each carries
 a `context` dict of the values that caused it, ready for structured logging:
 `AuthError`, `RateLimitError` (with `retry_after`), `ApiError`, `NotAllowedError`,
@@ -132,7 +153,7 @@ a `context` dict of the values that caused it, ready for structured logging:
 | `reporting` | Advertising API | `r_ads_reporting` | **live-tested** | `adAnalytics` (analytics and statistics finders), demographics with names, derived CTR/CPC/CPM/CPL |
 | `ad_library` | LinkedIn Ad Library | none beyond a member token | **live-tested** | keyword, advertiser, payer, country and date search with capped paging |
 | `leads` | Lead Sync API | `r_marketing_leadgen_automation` | experimental | lead forms, lead form responses |
-| `conversions` | Conversions API | `r_ads` / `rw_conversions` | experimental | conversion rules; create rule; send events (SHA-256 hashed emails, dedup `event_id`) |
+| `conversions` | Conversions API | `r_ads` / `rw_conversions` | experimental | list rules (owned or shared); create rules singly or in batches of 100 with campaign auto-association and attribution settings; list and create campaign associations; send events identified by hashed email, click id, IPv4 address, Lead Gen Form response, external id or (optionally hashed) name, with dedup `event_id` |
 | `audiences` | Matched Audiences | `r_ads` / `rw_dmp_segments` | experimental | list/create DMP segments; add or remove contacts and companies |
 | `organizations` | Community Management API | `r_organization_social`, `r_organization_admin` / `w_organization_social`, `rw_organization_admin` | experimental | pages you administer, posts, social metadata, follower/page/share statistics, follower count; create a post |
 | `events` | Events Management API | `r_events` | experimental | events by organizer (read-only) |
@@ -143,6 +164,11 @@ from the official docs at [learn.microsoft.com/linkedin/marketing](https://learn
 and LinkedIn's official Postman collections, and are unit-tested against mocked
 HTTP only. Each resource's docstring cites the doc pages it follows. Reports
 from live use are very welcome.
+
+`conversions` covers every documented step (rules, campaign associations and
+events), but none of it has been run against the live API yet, so it stays
+experimental until rule listing, rule creation with auto-association, a
+campaign association and a `lead`-identified event have been confirmed.
 
 Enable modules with `LINKEDIN_MODULES` (default `ads,reporting,ad_library`, or
 `all`). Using a disabled module raises `ModuleDisabledError` before any request is
@@ -243,7 +269,7 @@ whether you use Python or MCP.
 
 ## MCP server
 
-The server exposes one tool per library call for each enabled module (31 tools
+The server exposes one tool per library call for each enabled module (34 tools
 with every module on). Write tools are annotated as non-read-only, and their
 descriptions tell the model to show the dry run and only confirm once the user
 approves it. Experimental tools are labelled `[EXPERIMENTAL]`.
@@ -289,7 +315,7 @@ Avoid pasting tokens into config files.
 | reporting | `li_ad_analytics`, `li_ad_demographics` |
 | ad_library | `li_search_ad_library` |
 | leads | `li_list_lead_forms`, `li_list_leads` |
-| conversions | `li_list_conversion_rules`, `li_create_conversion_rule`\*, `li_send_conversion_events`\* |
+| conversions | `li_list_conversion_rules`, `li_create_conversion_rule`\*, `li_create_conversion_rules`\*, `li_list_campaign_conversions`, `li_associate_campaigns_to_conversion`\*, `li_send_conversion_events`\* |
 | audiences | `li_list_audiences`, `li_create_audience`\*, `li_update_audience_contacts`\*, `li_update_audience_companies`\* |
 | organizations | `li_list_my_organizations`, `li_list_organization_posts`, `li_post_engagement`, `li_organization_statistics`, `li_create_organization_post`\* |
 | events | `li_list_events` |
@@ -358,8 +384,30 @@ pinned by tests, so a correction is a one-line change):
   schema table's `accepted`.
 - **Matched Audiences:** the docs use three spellings of the user fields; this
   library sends the schema table's `firstName`/`lastName`/`title`/`company`/`country`.
-- **Conversions:** the docs say a batch returns 201, while Postman's test
-  expects 200 with per-element statuses. Both count as success here.
+- **Conversions:** the docs say an event batch returns 201, while Postman's test
+  expects 200 with per-element statuses. Both count as success here. Batch rule
+  creation and batch campaign association report per-element statuses inside a
+  2xx response; any element with a 4xx/5xx status (or an `errors` entry) turns
+  the result into `partially_applied` with the failed keys in `warning`.
+- **Conversion windows:** the schema table lists post-click windows 1, 7, 30 and
+  90 days, while LinkedIn's own error message lists `[1, 7, 28, 30, 90]`. This
+  library accepts 28 for post-click only. View-through follows the schema (1, 7,
+  30, 90). Both also accept 180 and 365 for the long-cycle types (`LEAD`,
+  `QUALIFIED_LEAD`, `MARKETING_QUALIFIED_LEAD`, `SALES_QUALIFIED_LEAD`,
+  `PURCHASE`, `ADD_TO_CART`, `SUBMIT_APPLICATION`). The older Insight Tag page
+  still says only 1, 7 or 30.
+- **Conversion rule types** follow the Conversions API schema's list. The
+  objective-mapping table also names `REGISTER_EVENT`, `APPLY_JOB` and
+  `TALENT_LEAD`, which the type list doesn't; they are not accepted here.
+- **Campaign associations:** the Conversions API page creates several with
+  `PUT ?ids=List(...)` and `X-RestLi-Method: BATCH_UPDATE`; the conversion
+  tracking page calls the same operation "Batch Create" without showing a
+  request. This library sends the `BATCH_UPDATE` form. Its sample "find by
+  campaigns" URL is missing the closing parenthesis of `List(`; this library
+  closes it. Paging (`start`/`count`) on that finder is assumed from the
+  `paging` block in the sample response. At most 50 campaigns go in one
+  association call; that cap is this library's (to keep the URL short), not
+  LinkedIn's.
 - **Organizations:** the page-statistics docs flip which end of the time range is
   inclusive; social metadata lists `r_organization_social_feed` scopes.
 

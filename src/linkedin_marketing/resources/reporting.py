@@ -33,6 +33,7 @@ from decimal import ROUND_HALF_UP, Decimal
 from linkedin_marketing import restli
 from linkedin_marketing.errors import LinkedInError
 from linkedin_marketing.models import parse_decimal, to_money
+from linkedin_marketing.resources.ads import ALL_CAMPAIGN_STATUSES
 from linkedin_marketing.resources.base import Resource, upper_all
 from linkedin_marketing.resources.targeting import Targeting
 
@@ -320,7 +321,7 @@ class Reporting(Resource):
         if campaign_ids:
             found = {
                 c.id
-                for c in self._campaigns.iter(account_id, _ALL_CAMPAIGN_STATUSES, ids=campaign_ids)
+                for c in self._campaigns.iter(account_id, ALL_CAMPAIGN_STATUSES, ids=campaign_ids)
             }
             self._require_all(campaign_ids, found, "campaign", account_id)
             return "campaigns", restli.urn_list(restli.campaign_urn(i) for i in campaign_ids)
@@ -384,5 +385,4 @@ class Reporting(Resource):
         return AnalyticsReport(account_id, pivots, granularity, start, end, currency, rows, notes)
 
 
-_ALL_CAMPAIGN_STATUSES = ("ACTIVE", "PAUSED", "DRAFT", "COMPLETED", "ARCHIVED", "CANCELED")
 _ALL_GROUP_STATUSES = ("ACTIVE", "PAUSED", "DRAFT", "ARCHIVED", "CANCELED")

@@ -217,10 +217,28 @@ class WriteRefusedError(LinkedInError):
     ``status_not_allowed``, ``current_status_not_switchable``,
     ``not_in_account``, ``budget_not_positive``, ``budget_over_cap``,
     ``no_budget_cap``, ``no_daily_budget``, ``batch_too_large``,
-    ``invalid_input``.
+    ``invalid_input``, ``rule_disabled``, ``version_too_old``.
     """
 
     def __init__(self, reason: str, action: str, detail: str, **context):
         super().__init__(f"Refused {action}: {detail}", reason=reason, action=action, **context)
         self.reason = reason
         self.action = action
+
+
+class CampaignNotInAccountError(LinkedInError):
+    """Campaign ids named in a read were not found under the given ad account.
+
+    Raised before a cross-account read is made, so a misconfigured agent
+    cannot reach campaigns outside the allow-listed account. Guarded writes
+    raise ``WriteRefusedError(reason="not_in_account")`` instead.
+    """
+
+    def __init__(self, account_id: int, campaign_ids: list[int]):
+        super().__init__(
+            f"Campaign id(s) {campaign_ids} are not in ad account {account_id}.",
+            account_id=account_id,
+            campaign_ids=campaign_ids,
+        )
+        self.account_id = account_id
+        self.campaign_ids = campaign_ids

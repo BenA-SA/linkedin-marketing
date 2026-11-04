@@ -5,6 +5,7 @@ from __future__ import annotations
 
 import asyncio
 import json
+from datetime import UTC, datetime
 
 import httpx
 import pytest
@@ -103,6 +104,81 @@ class TestServer:
         payload = call(server, "li_list_campaign_groups", {})
         assert call_route.called
         assert "G" in json.dumps(payload)
+
+    def test_conversion_tools_registered_and_annotated(self, tmp_path):
+        server = build_server(make_settings(tmp_path, modules=("conversions",)), lambda: None)
+        tools = {tool.name: tool for tool in asyncio.run(server.list_tools())}
+        assert set(tools) == {
+            "li_list_conversion_rules",
+            "li_create_conversion_rule",
+            "li_create_conversion_rules",
+            "li_list_campaign_conversions",
+            "li_associate_campaigns_to_conversion",
+            "li_send_conversion_events",
+        }
+        for name in (
+            "li_create_conversion_rule",
+            "li_create_conversion_rules",
+            "li_associate_campaigns_to_conversion",
+            "li_send_conversion_events",
+        ):
+            assert read_only_hint(tools[name]) is False
+            assert "DRY RUN" in tools[name].description
+        assert read_only_hint(tools["li_list_campaign_conversions"]) is True
+
+    def test_create_rule_tool_passes_auto_association(self, tmp_path, api):
+        settings = make_settings(tmp_path)
+        post = route(api, "POST", "/conversions")
+        client = LinkedInClient(settings, httpx.Client())
+        server = build_server(settings, lambda: client)
+        payload = call(
+            server,
+            "li_create_conversion_rule",
+            {"name": "Lead", "rule_type": "LEAD", "auto_association": "OBJECTIVE_BASED"},
+        )
+        assert payload["dry_run"] is True
+        assert payload["request"]["url"].endswith("?autoAssociationType=OBJECTIVE_BASED")
+        assert payload["request"]["json"]["attributionType"] == "LAST_TOUCH_BY_CAMPAIGN"
+        assert not post.called
+
+    def test_associate_tool_dry_runs_through_library(self, tmp_path, api):
+        settings = make_settings(tmp_path)
+        route(api, "GET", "/conversions/44", json={"id": 44, "name": "R", "enabled": True})
+        route(
+            api,
+            "GET",
+            f"/adAccounts/{ACCOUNT_ID}/adCampaigns",
+            json={"elements": [{"id": CAMPAIGN_ID, "status": "ACTIVE"}]},
+        )
+        route(api, "GET", "/campaignConversions?", json={"elements": []})
+        put = route(api, "PUT", "/campaignConversions", status=204)
+        client = LinkedInClient(settings, httpx.Client())
+        server = build_server(settings, lambda: client)
+        payload = call(
+            server,
+            "li_associate_campaigns_to_conversion",
+            {"rule_id": 44, "campaign_ids": [CAMPAIGN_ID]},
+        )
+        assert payload["dry_run"] is True
+        assert payload["request"]["method"] == "PUT"
+        assert not put.called
+
+    def test_send_events_tool_accepts_lead(self, tmp_path, api):
+        settings = make_settings(tmp_path)
+        route(api, "GET", "/conversions/44", json={"id": 44, "name": "R", "enabled": True})
+        client = LinkedInClient(settings, httpx.Client())
+        server = build_server(settings, lambda: client)
+        lead = "urn:li:leadGenFormResponse:00000000-0000-0000-0000-000000000000-4"
+        happened = datetime.now(UTC).isoformat()
+        payload = call(
+            server,
+            "li_send_conversion_events",
+            {"rule_id": 44, "events": [{"happened_at": happened, "lead": lead}]},
+        )
+        assert payload["request"]["json"]["elements"][0]["user"] == {
+            "userIds": [],
+            "lead": lead,
+        }
 
 
 class TestMintToken:
