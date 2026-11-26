@@ -41,6 +41,21 @@ def call(server, name: str, arguments: dict):
     return json.loads(content[0].text)
 
 
+def tool_error_text(server, name: str, arguments: dict) -> str:
+    """The message a failing tool call reports, across mcp SDK 1.x and 2.x.
+
+    2.x ``call_tool`` raises the ``ToolError``; 1.x returns an is_error result.
+    """
+    try:
+        result = asyncio.run(server.call_tool(name, arguments))
+    except Exception as exc:
+        return str(exc)
+    if isinstance(result, tuple):
+        result = result[0]
+    content = getattr(result, "content", result)
+    return " ".join(getattr(block, "text", "") for block in content)
+
+
 class TestServer:
     def test_only_enabled_modules_get_tools(self, tmp_path):
         server = build_server(make_settings(tmp_path, modules=("ad_library",)), lambda: None)
@@ -90,6 +105,50 @@ class TestServer:
         )
         assert payload["dry_run"] is True
         assert not update.called
+
+    def test_linkedin_error_reaches_the_model_with_its_message(self, tmp_path, api):
+        settings = make_settings(tmp_path, read_only=False)
+        path = f"/adAccounts/{ACCOUNT_ID}/adCampaigns/{CAMPAIGN_ID}"
+        route(
+            api,
+            "GET",
+            path,
+            json={
+                "id": CAMPAIGN_ID,
+                "status": "ACTIVE",
+                "name": "C",
+                "account": f"urn:li:sponsoredAccount:{ACCOUNT_ID}",
+            },
+        )
+        route(
+            api,
+            "POST",
+            path,
+            status=403,
+            json={
+                "code": "FORBIDDEN",
+                "status": 403,
+                "message": "Your application is not configured to access the related "
+                "advertiser account(s), please ensure you have added the account ID(s) "
+                "in your Account Management list.",
+            },
+        )
+        client = LinkedInClient(settings, httpx.Client())
+        server = build_server(settings, lambda: client)
+        text = tool_error_text(
+            server,
+            "li_set_campaign_status",
+            {"campaign_id": CAMPAIGN_ID, "status": "PAUSED", "confirm": True},
+        )
+        assert "AuthError" in text
+        assert "Account Management list" in text
+        assert "Advertising API" in text
+
+    def test_bad_argument_reaches_the_model_with_its_message(self, tmp_path):
+        settings = make_settings(tmp_path, allowed_ad_account_ids=())
+        server = build_server(settings, lambda: LinkedInClient(settings, httpx.Client()))
+        text = tool_error_text(server, "li_list_campaign_groups", {})
+        assert "Pass account_id" in text
 
     def test_read_tool_uses_default_account(self, tmp_path, api):
         settings = make_settings(tmp_path)

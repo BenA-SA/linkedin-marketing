@@ -8,11 +8,13 @@ does the dry run, read-only refusal, allow-lists, caps and audit log.
 
 from __future__ import annotations
 
+import functools
 from collections.abc import Callable
 from datetime import date, datetime, timedelta
 from typing import Literal
 
 from linkedin_marketing.client import LinkedInClient
+from linkedin_marketing.errors import LinkedInError
 from linkedin_marketing.modules import MODULES
 from linkedin_marketing.resources.audiences import AudienceCompany, AudienceUser
 from linkedin_marketing.resources.conversions import ConversionEvent, ConversionRuleSpec
@@ -65,13 +67,45 @@ def _dicts(items) -> list[dict]:
     return [item.to_dict() for item in items]
 
 
+def _tool_error_class() -> type[Exception]:
+    try:
+        from mcp.server.mcpserver.exceptions import ToolError
+    except ImportError:
+        from mcp.server.fastmcp.exceptions import ToolError
+    return ToolError
+
+
+def _surfacing_errors(fn):
+    """Wrap ``fn`` so anticipated failures reach the model with their message.
+
+    The mcp SDK 2.x treats any exception other than ``ToolError`` as a crash and
+    tells the client only "Error executing tool <name>", which hid LinkedIn's
+    403 explanation. ``LinkedInError`` (whose message carries LinkedIn's own
+    words and never a credential) and the ``ValueError`` raised for bad
+    arguments are re-raised as ``ToolError``; genuine bugs still crash.
+    """
+    tool_error = _tool_error_class()
+
+    @functools.wraps(fn)
+    def wrapper(*args, **kwargs):
+        try:
+            return fn(*args, **kwargs)
+        except (LinkedInError, ValueError) as exc:
+            raise tool_error(f"{type(exc).__name__}: {exc}") from exc
+
+    return wrapper
+
+
 def _add(server, fn, *, write: bool = False, description: str = "") -> None:
     """Register ``fn`` with read/write annotations understood by MCP clients."""
     from mcp.types import ToolAnnotations
 
     annotations = ToolAnnotations(readOnlyHint=not write, destructiveHint=write, openWorldHint=True)
     server.add_tool(
-        fn, name=fn.__name__, description=description or fn.__doc__, annotations=annotations
+        _surfacing_errors(fn),
+        name=fn.__name__,
+        description=description or fn.__doc__,
+        annotations=annotations,
     )
 
 

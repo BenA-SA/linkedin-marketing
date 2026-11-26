@@ -61,19 +61,54 @@ class ModuleDisabledError(LinkedInError):
         self.module = module
 
 
+_ACCOUNT_NOT_CONFIGURED_MARKER = "not configured to access the related advertiser account"
+_ACCOUNT_NOT_CONFIGURED_HINT = (
+    "The app can read this ad account but not manage it: on the Advertising API "
+    "Development tier an account must be added to the app's ad account list "
+    "(Developer Portal -> the app -> Products -> Advertising API) before campaign "
+    "writes work. Conversions and audience writes are not subject to this list."
+)
+
+
 class AuthError(LinkedInError):
     """The token is missing, expired or revoked, or lacks a scope or role.
 
     ``status_code`` is 0 when no request was made. 401 from the API means the
     access token was refused; 400/401 from the token endpoint means the
-    refresh token was; 403 means a missing scope, product or role.
+    refresh token was; 403 means a missing scope, product or role, or (on the
+    Development tier) an ad account missing from the app's account list.
+
+    LinkedIn's own ``message`` and ``serviceErrorCode`` are parsed from the body
+    into ``api_message`` / ``service_error_code`` and appended to the message,
+    because the generic hint alone cannot say which of those causes fired.
     """
 
     def __init__(self, message: str, status_code: int = 0, body: str = "", endpoint: str = ""):
-        super().__init__(message, status_code=status_code, body=_truncate(body), endpoint=endpoint)
+        api_message, service_error_code = _parse_error_body(body)
+        super().__init__(
+            _auth_message(message, api_message, endpoint),
+            status_code=status_code,
+            body=_truncate(body),
+            endpoint=endpoint,
+            api_message=api_message,
+            service_error_code=service_error_code,
+        )
         self.status_code = status_code
         self.body = _truncate(body)
         self.endpoint = endpoint
+        self.api_message = api_message
+        self.service_error_code = service_error_code
+
+
+def _auth_message(hint: str, api_message: str, endpoint: str) -> str:
+    parts = [hint]
+    if endpoint:
+        parts.append(f"Endpoint: {endpoint}.")
+    if api_message:
+        parts.append(f"LinkedIn said: {api_message!r}.")
+    if _ACCOUNT_NOT_CONFIGURED_MARKER in api_message:
+        parts.append(_ACCOUNT_NOT_CONFIGURED_HINT)
+    return " ".join(parts)
 
 
 class RateLimitError(LinkedInError):

@@ -164,6 +164,21 @@ class TestAuthAndTransport:
             client.ads.accounts.get(ACCOUNT_ID)
         assert caught.value.context["status_code"] == status
 
+    def test_403_keeps_what_linkedin_said(self, client, api):
+        route(
+            api,
+            "GET",
+            f"/adAccounts/{ACCOUNT_ID}",
+            status=403,
+            json={"message": "Not enough permissions", "serviceErrorCode": 100},
+        )
+        with pytest.raises(AuthError) as caught:
+            client.ads.accounts.get(ACCOUNT_ID)
+        assert caught.value.api_message == "Not enough permissions"
+        assert caught.value.service_error_code == 100
+        assert "Not enough permissions" in str(caught.value)
+        assert "Advertising API" not in str(caught.value)
+
     def test_429_long_retry_after_raises_typed_error(self, client, api):
         route(api, "GET", f"/adAccounts/{ACCOUNT_ID}", status=429, headers={"Retry-After": "3600"})
         with pytest.raises(RateLimitError) as caught:
