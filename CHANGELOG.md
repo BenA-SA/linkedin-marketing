@@ -6,6 +6,18 @@ All notable changes to this project are documented here. The format follows
 
 ## [Unreleased]
 
+### Fixed
+- MCP: tool failures now reach the model with their message. The mcp SDK 2.x
+  masks any exception that is not a `ToolError` as "Error executing tool
+  <name>", which hid every `LinkedInError` (a 403 on `li_set_campaign_status`
+  showed no reason at all). Library errors and argument `ValueError`s are now
+  re-raised as `ToolError`, prefixed with the error class.
+- `AuthError` keeps LinkedIn's own `message` and `serviceErrorCode`
+  (`api_message`, `service_error_code`) and appends them to its text. When
+  LinkedIn says the app is "not configured to access the related advertiser
+  account(s)", the message explains that Development-tier apps must list the
+  ad account under the Advertising API product before campaign writes work.
+
 ### Added
 - Conversions: campaign association, without which LinkedIn attributes no
   conversions. `create_rule` takes `auto_association` (`ALL_CAMPAIGNS` or
